@@ -3,9 +3,14 @@
 #include <stdlib.h>
 
 typedef struct {
+    uint64_t rip;
     uint64_t rsp;
     uint64_t rbp;
-    uint64_t rip;
+    uint64_t rbx;
+    uint64_t r12;
+    uint64_t r13;
+    uint64_t r14;
+    uint64_t r15;
     void *stack_end;
 } Context;
 
@@ -64,12 +69,19 @@ void coroutine_create(void (*f)(void), void *arg)
 
 __attribute__((naked)) void coroutine_yield()
 {
+    register Context *context __asm__("rax");
+    context = &contexts.items[contexts.current];
+
     __asm__(
-        "pop r10\n\t"
-        "mov %0, r10\n\t"
-        "mov %1, rsp\n\t"
-        "mov %2, rbp\n\t"
-        : "=m"(contexts.items[contexts.current].rip), "=m"(contexts.items[contexts.current].rsp), "=m"(contexts.items[contexts.current].rbp)
+        "pop r11\n\t"
+        "mov [rax+0x00], r11\n\t"
+        "mov [rax+0x08], rsp\n\t"
+        "mov [rax+0x10], rbp\n\t"
+        "mov [rax+0x18], rbx\n\t"
+        "mov [rax+0x20], r12\n\t"
+        "mov [rax+0x28], r13\n\t"
+        "mov [rax+0x30], r14\n\t"
+        "mov [rax+0x38], r15\n\t"
     );
 
     contexts.current++;
@@ -101,13 +113,17 @@ __attribute__((naked)) void coroutine_finish()
 
 __attribute__((naked)) void switch_context()
 {
-    register Context *context __asm__("rdx");
+    register Context *context __asm__("rax");
     context = &contexts.items[contexts.current];
 
     __asm__(
-        "mov rsp, %0\n\t"
-        "mov rbp, %1\n\t"
-        : "=m"(context->rsp), "=m"(context->rbp)
+        "mov rsp, [rax+0x08]\n\t"
+        "mov rbp, [rax+0x10]\n\t"
+        "mov rbx, [rax+0x18]\n\t"
+        "mov r12, [rax+0x20]\n\t"
+        "mov r13, [rax+0x28]\n\t"
+        "mov r14, [rax+0x30]\n\t"
+        "mov r15, [rax+0x38]\n\t"
     );
 
     if (!context->rbp)
