@@ -1,6 +1,7 @@
 #ifndef COROUTINES
 #define COROUTINES
 
+void coroutine_finish();
 void coroutine_yield();
 void coroutine_create(void (*f)(void*), void *arg);
 void init_coroutine();

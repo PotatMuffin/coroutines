@@ -19,6 +19,11 @@ int main()
     {
         coroutine_create(counter, (void *)i+1);
     }
-    while(coroutine_count() > 1) coroutine_yield();
+
+    for(int i = 0; i < 10; i++)
+    {
+        coroutine_yield();
+    }
+
     return 0;
 }

@@ -15,12 +15,24 @@ typedef struct {
 } Context;
 
 typedef struct {
-    Context items[256];
+    Context *items;
     size_t count;
+    size_t capacity;
     size_t current;
 } Contexts;
 
-#define STACK_SIZE 2*1024
+#define CONTEXTS 64
+#define STACK_SIZE 4*1024
+
+#define list_append(list, item)                                                              \
+    do {                                                                                     \
+        if ((list)->count == (list)->capacity)                                               \
+        {                                                                                    \
+            (list)->capacity = ((list)->capacity) ? (list)->capacity*2 : CONTEXTS;           \
+            (list)->items = realloc((list)->items, (list)->capacity*sizeof(*(list)->items)); \
+        }                                                                                    \
+        (list)->items[(list)->count++] = item;                                               \
+    } while(0)
 
 void *public_stack;
 Contexts contexts = {0};
@@ -48,12 +60,12 @@ size_t coroutine_index()
 void init_coroutine()
 {
     public_stack = malloc(STACK_SIZE);
-    contexts.items[contexts.count++] = (Context){0};
+    list_append(&contexts, ((Context){0}));
 }
 
 void coroutine_create(void (*f)(void), void *arg)
 {
-    Context *c = &contexts.items[contexts.count++];
+    Context c = {0};
     void *stack = malloc(STACK_SIZE);
     void **stack_start = (void **)((uint64_t)stack+STACK_SIZE);
     stack_start--;
@@ -61,16 +73,24 @@ void coroutine_create(void (*f)(void), void *arg)
     stack_start--;
     *stack_start = arg;
 
-    c->stack_end = stack;
-    c->rsp = (uint64_t)stack_start;
-    c->rbp = 0;
-    c->rip = (uint64_t)f;
+    c.stack_end = stack;
+    c.rsp = (uint64_t)stack_start;
+    c.rbp = 0;
+    c.rip = (uint64_t)f;
+    c.rbx = 0;
+    c.r12 = 0;
+    c.r13 = 0;
+    c.r14 = 0;
+    c.r15 = 0;
+    list_append(&contexts, c);
 }
 
 __attribute__((naked)) void coroutine_yield()
 {
-    register Context *context __asm__("rax");
-    context = &contexts.items[contexts.current];
+    __asm__(
+        "lea rax, %0\n\t"
+        : "=m"(contexts.items[contexts.current])
+    );
 
     __asm__(
         "pop r11\n\t"
@@ -87,26 +107,39 @@ __attribute__((naked)) void coroutine_yield()
     contexts.current++;
     contexts.current %= contexts.count;
 
-    register void *rax __asm__("rax");
-    rax = (void *)&switch_context;
     __asm__(
+        "lea	rax, switch_context[rip]\n\t"
         "jmp rax\n\t"
     );
 }
 
 __attribute__((naked)) void coroutine_finish()
 {
-    register void **rsp __asm__("rsp");
-    rsp = public_stack;
+    if (contexts.current == 0)
+    {
+        register int i;
+        for(i = 1; i < contexts.count; i++)
+        {
+            free(contexts.items[i].stack_end);
+            contexts.items[i] = (Context){0};
+        }
+        contexts.count = 1;
+        contexts.capacity = CONTEXTS;
+        contexts.items = realloc(contexts.items, contexts.capacity*sizeof(*contexts.items));
+        __asm__("ret\n\t");
+    }
+
+    __asm__("mov rsp, QWORD PTR public_stack[rip]\n\t");
+
     free(contexts.items[contexts.current].stack_end);
     contexts.items[contexts.current] = contexts.items[contexts.count-1];
+    contexts.items[contexts.count-1] = (Context){0};
     contexts.count--;
 
     contexts.current %= contexts.count;
 
-    register void *rax __asm__("rax");
-    rax = (void *)&switch_context;
     __asm__(
+        "lea	rax, switch_context[rip]\n\t"
         "jmp rax\n\t"
     );
 }
@@ -130,7 +163,10 @@ __attribute__((naked)) void switch_context()
     {
         register void **rsp __asm__("rsp"); 
         register void *rdi __asm__("rdi");
-        rdi = *(rsp++);
+        __asm__(
+            "mov rdi, %0\n\t"
+            : "=m"(*(rsp++))
+        );
     }
 
     __asm__(
